@@ -628,16 +628,56 @@ async function addWord(){
   saveUserData(); hideAddWord(); loadVocabularyList(); updateDashboard();
   if (posList.length) alert(`Word added! POS detected: ${posList.join(', ')}`);
 }
+  function normPos(s){
+  const t = String(s||"").toLowerCase().trim();
+  if (!t) return "";
+  // normalize common variants
+  if (/^adj\b|adjective/.test(t)) return "adjective";
+  if (/^adv\b|adverb/.test(t))    return "adverb";
+  if (/^n\b|noun/.test(t))        return "noun";
+  if (/^v\b|verb/.test(t))        return /phrasal/.test(t) ? "phrasal verb" : "verb";
+  if (/phrasal\s*verb/.test(t))   return "phrasal verb";
+  if (/preposition/.test(t))      return "preposition";
+  if (/conjunction/.test(t))      return "conjunction";
+  if (/pronoun/.test(t))          return "pronoun";
+  if (/determiner|article/.test(t)) return "determiner";
+  if (/interjection/.test(t))     return "interjection";
+  return t.replace(/\s+/g," ");
+}
+
+function deriveAllPos(word){
+  // Prefer array; otherwise split "verb, adjective" / "verb/adjective"
+  let arr = Array.isArray(word.posList) && word.posList.length
+    ? word.posList.slice()
+    : (word.partOfSpeech ? String(word.partOfSpeech).split(/\s*,\s*|\s*\/\s*/) : []);
+  arr = arr.map(normPos).filter(Boolean);
+  // de-dupe
+  return Array.from(new Set(arr));
+}
+
+function choosePrimaryPos(word){
+  const all = deriveAllPos(word);
+  const cam = normPos(word.cambridgePos || word.camPos || "");
+  const priority = ["verb","noun","adjective","adverb","phrasal verb","preposition","conjunction","pronoun","determiner","interjection"];
+
+  // Cambridge beats everything if present
+  let primary = cam && all.includes(cam) ? cam : "";
+  if (!primary){
+    for (const p of priority){ if (all.includes(p)){ primary = p; break; } }
+  }
+  if (!primary) primary = all[0] || "";
+
+  // Optional soft rule: if both verb+adjective and Cambridge ≠ adjective, hide the adj
+  const extras = all.filter(p => p !== primary);
+  return { primary, extras };
+}
+
 function loadVocabularyList(){
   const listHtml = vocabulary.map(word => {
-    // build POS pill: primary only; others in tooltip
-    const posAll = (word.posList && word.posList.length)
-      ? word.posList
-      : (word.partOfSpeech ? [word.partOfSpeech] : []);
-    const primary   = posAll[0] || "";
-    const extraCnt  = Math.max(0, posAll.length - 1);
-    const extraTitle = extraCnt ? ` title="Also: ${posAll.slice(1).join(', ')}"` : "";
-    const posPill = primary
+    const { primary, extras } = choosePrimaryPos(word);
+    const extraCnt   = extras.length;
+    const extraTitle = extraCnt ? ` title="Also: ${extras.join(', ')}"` : "";
+    const posPill    = primary
       ? `<span class="pill" style="font-size:10px;padding:2px 6px;"${extraTitle}>${primary}${extraCnt ? " +" + extraCnt : ""}</span>`
       : "";
 
@@ -647,30 +687,27 @@ function loadVocabularyList(){
           <span class="label-dot ${word.learned ? 'dot-green' : 'dot-amber'}"></span>
           <strong style="font-size:16px;">${word.word}</strong>
           ${posPill}
-          ${word.quizStats && word.quizStats.correct>0
-            ? `<span class="pill" style="font-size:10px;padding:2px 6px;background:#22c55e;color:white;">${word.quizStats.correct}✓</span>`
-            : ''}
+          ${word.quizStats?.correct>0 ? `<span class="pill" style="font-size:10px;padding:2px 6px;background:#22c55e;color:white;">${word.quizStats.correct}✓</span>` : ''}
         </div>
 
-        <div class="muted" style="margin-left:16px;">${word.definition}</div>
+        <div class="muted" style="margin-left:16px;">${word.definition || ""}</div>
         ${word.vietnamese ? `<div class="muted tiny" style="margin-left:16px;color:#60a5fa;">🇻🇳 ${word.vietnamese}</div>` : ''}
         ${word.familyWords ? `<div class="muted tiny" style="margin-left:16px;color:#f59e0b;">👥 Family: ${word.familyWords}</div>` : ''}
         ${word.example1 ? `<div class="muted tiny" style="margin-left:16px;font-style:italic;">"${word.example1}"</div>` : ''}
         ${word.example2 ? `<div class="muted tiny" style="margin-left:16px;font-style:italic;">"${word.example2}"</div>` : ''}
 
         <div style="display:flex;gap:8px;margin-left:16px;margin-top:8px;flex-wrap:wrap;">
-          <button class="btn tiny" onclick="toggleLearned(${word.id})" ${!word.learned && (!word.quizStats || word.quizStats.consecutiveCorrect < 3) ? 'disabled title="Need 3 consecutive correct quiz answers to mark as learned"' : ''}>
+          <button class="btn tiny" onclick="toggleLearned(${word.id})" ${!word.learned && (!word.quizStats || word.quizStats.consecutiveCorrect<3) ? 'disabled title="Need 3 consecutive correct quiz answers to mark as learned"' : ''}>
             ${word.learned ? 'Mark as Learning' : 'Mark as Learned'}
           </button>
           <button class="btn ghost tiny" onclick="playWordPronunciationById(${word.id})">🔊</button>
           <button class="btn warn tiny" data-action="delete" data-id="${word.id}">Delete</button>
         </div>
-      </div>
-    `;
+      </div>`;
   }).join('');
-
   document.getElementById('vocabularyList').innerHTML = listHtml;
 }
+
 
 function toggleLearned(id){
   const w = vocabulary.find(x=>x.id===id); if (!w) return;
