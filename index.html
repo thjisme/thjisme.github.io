@@ -321,23 +321,31 @@
 </div></div>
 
 <script>
-/* ===== POS canonicalization ===== */
+// --- POS canonicalization & scoring ---
 const ALLOWED_POS = [
   "noun","verb","adjective","adverb","pronoun","preposition",
-  "conjunction","interjection","determiner","modal","auxiliary verb","phrasal verb"
+  "conjunction","interjection","determiner","modal","auxiliary verb","phrasal verb","proper noun","numeral"
 ];
-function sanitizePOS(list){
+const RARE_POS_HINTS = /\b(archaic|obsolete|dated|rare|dialectal|nonstandard|vulgar|slang)\b/i;
+
+function normalizePOS(tag){
+  const t = String(tag||"").toLowerCase().trim().replace(/\./g,"");
   const map = { n:"noun", v:"verb", adj:"adjective", adv:"adverb",
-                pron:"pronoun", prep:"preposition", conj:"conjunction",
-                interj:"interjection", det:"determiner" };
+    pron:"pronoun", prep:"preposition", conj:"conjunction",
+    interj:"interjection", det:"determiner", "modal verb":"modal"
+  };
+  return map[t] || t;
+}
+
+function sanitizePOS(list){
   const out = [], seen = new Set();
   (list||[]).forEach(p=>{
-    let t = String(p||"").toLowerCase().trim().replace(/\./g,"");
-    t = map[t] || t;
+    const t = normalizePOS(p);
     if (ALLOWED_POS.includes(t) && !seen.has(t)) { seen.add(t); out.push(t); }
   });
   return out;
 }
+
 
 /* ===== State ===== */
 let users = JSON.parse(localStorage.getItem('tesolUsers') || '{}');
@@ -621,33 +629,49 @@ async function addWord(){
   if (posList.length) alert(`Word added! POS detected: ${posList.join(', ')}`);
 }
 function loadVocabularyList(){
-  const listHtml = vocabulary.map(word=>`
-    <div class="grid-row" style="grid-template-columns:1fr;gap:12px;padding:16px;">
-      <div style="display:flex;align-items:center;gap:8px;">
-        <span class="label-dot ${word.learned?'dot-green':'dot-amber'}"></span>
-        <strong style="font-size:16px;">${word.word}</strong>
-        ${
-          word.posList?.length
-          ? `<span class="pill" style="font-size:10px;padding:2px 6px;">${word.posList.join(', ')}</span>`
-          : (word.partOfSpeech ? `<span class="pill" style="font-size:10px;padding:2px 6px;">${word.partOfSpeech}</span>` : '')
-        }
-        ${word.quizStats?.correct>0 ? `<span class="pill" style="font-size:10px;padding:2px 6px;background:#22c55e;color:white;">${word.quizStats.correct}✓</span>`:''}
+  const listHtml = vocabulary.map(word => {
+    // build POS pill: primary only; others in tooltip
+    const posAll = (word.posList && word.posList.length)
+      ? word.posList
+      : (word.partOfSpeech ? [word.partOfSpeech] : []);
+    const primary   = posAll[0] || "";
+    const extraCnt  = Math.max(0, posAll.length - 1);
+    const extraTitle = extraCnt ? ` title="Also: ${posAll.slice(1).join(', ')}"` : "";
+    const posPill = primary
+      ? `<span class="pill" style="font-size:10px;padding:2px 6px;"${extraTitle}>${primary}${extraCnt ? " +" + extraCnt : ""}</span>`
+      : "";
+
+    return `
+      <div class="grid-row" style="grid-template-columns:1fr;gap:12px;padding:16px;">
+        <div style="display:flex;align-items:center;gap:8px;">
+          <span class="label-dot ${word.learned ? 'dot-green' : 'dot-amber'}"></span>
+          <strong style="font-size:16px;">${word.word}</strong>
+          ${posPill}
+          ${word.quizStats && word.quizStats.correct>0
+            ? `<span class="pill" style="font-size:10px;padding:2px 6px;background:#22c55e;color:white;">${word.quizStats.correct}✓</span>`
+            : ''}
+        </div>
+
+        <div class="muted" style="margin-left:16px;">${word.definition}</div>
+        ${word.vietnamese ? `<div class="muted tiny" style="margin-left:16px;color:#60a5fa;">🇻🇳 ${word.vietnamese}</div>` : ''}
+        ${word.familyWords ? `<div class="muted tiny" style="margin-left:16px;color:#f59e0b;">👥 Family: ${word.familyWords}</div>` : ''}
+        ${word.example1 ? `<div class="muted tiny" style="margin-left:16px;font-style:italic;">"${word.example1}"</div>` : ''}
+        ${word.example2 ? `<div class="muted tiny" style="margin-left:16px;font-style:italic;">"${word.example2}"</div>` : ''}
+
+        <div style="display:flex;gap:8px;margin-left:16px;margin-top:8px;flex-wrap:wrap;">
+          <button class="btn tiny" onclick="toggleLearned(${word.id})" ${!word.learned && (!word.quizStats || word.quizStats.consecutiveCorrect < 3) ? 'disabled title="Need 3 consecutive correct quiz answers to mark as learned"' : ''}>
+            ${word.learned ? 'Mark as Learning' : 'Mark as Learned'}
+          </button>
+          <button class="btn ghost tiny" onclick="playWordPronunciationById(${word.id})">🔊</button>
+          <button class="btn warn tiny" data-action="delete" data-id="${word.id}">Delete</button>
+        </div>
       </div>
-      <div class="muted" style="margin-left:16px;">${word.definition}</div>
-      ${word.vietnamese ? `<div class="muted tiny" style="margin-left:16px;color:#60a5fa;">🇻🇳 ${word.vietnamese}</div>` : ''}
-      ${word.familyWords ? `<div class="muted tiny" style="margin-left:16px;color:#f59e0b;">👥 Family: ${word.familyWords}</div>` : ''}
-      ${word.example1 ? `<div class="muted tiny" style="margin-left:16px;font-style:italic;">"${word.example1}"</div>` : ''}
-      ${word.example2 ? `<div class="muted tiny" style="margin-left:16px;font-style:italic;">"${word.example2}"</div>` : ''}
-      <div style="display:flex;gap:8px;margin-left:16px;margin-top:8px;flex-wrap:wrap;">
-        <button class="btn tiny" onclick="toggleLearned(${word.id})" ${!word.learned && (!word.quizStats || word.quizStats.consecutiveCorrect<3) ? 'disabled title="Need 3 consecutive correct quiz answers to mark as learned"' : ''}>
-          ${word.learned ? 'Mark as Learning' : 'Mark as Learned'}
-        </button>
-        <button class="btn ghost tiny" onclick="playWordPronunciationById(${word.id})">🔊</button>
-        <button class="btn warn tiny" data-action="delete" data-id="${word.id}">Delete</button>
-      </div>
-    </div>`).join('');
+    `;
+  }).join('');
+
   document.getElementById('vocabularyList').innerHTML = listHtml;
 }
+
 function toggleLearned(id){
   const w = vocabulary.find(x=>x.id===id); if (!w) return;
   w.learned = !w.learned; saveUserData(); loadVocabularyList(); updateDashboard();
@@ -889,48 +913,58 @@ async function fetchDatamusePOS(word){
   }catch{ return []; }
 }
 
-// REPLACE your existing fetchDict with this one
+  // Score a meaning: reward good examples/defs, penalize "archaic/obsolete/dated"
+function scoreMeaning(meaning){
+  let s = 0;
+  for (const d of (meaning.definitions||[])){
+    if (d.definition) s += 1;
+    if (d.example)    s += 0.5;
+    if (RARE_POS_HINTS.test(d.definition||"") || RARE_POS_HINTS.test(d.example||"")) s -= 1.5;
+  }
+  return s;
+}
+
+// Dictionary lookup with POS ranking & filtering
 async function fetchDict(word){
-  const res = await fetch(`https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`);
-  if(!res.ok) throw new Error("Dictionary not found");
+  const url = `https://api.dictionaryapi.dev/api/v2/entries/en/${encodeURIComponent(word)}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error("Dictionary not found");
   const json = await res.json();
   const e = json[0] || {};
 
-  // IPA + audio (prefer UK if present)
-  const ph = Array.isArray(e.phonetics) ? e.phonetics : [];
-  const ipa = (ph.find(p=>p.text)?.text) || "";
-  const uk  = ph.find(p => /-uk\.mp3(\?|$)/i.test(p?.audio||""));
-  const audio = (uk?.audio) || (ph.find(p=>p.audio)?.audio) || "";
+  // IPA + audio (prefer a UK mp3 if present)
+  const phon = Array.isArray(e.phonetics) ? e.phonetics : [];
+  const ipa  = (phon.find(p=>p.text)?.text) || "";
+  const uk   = phon.find(p => /-uk\.mp3(\?|$)/i.test(p?.audio||""));
+  const audio = (uk?.audio) || (phon.find(p=>p.audio)?.audio) || "";
 
-  // collect POS + defs/examples; flag archaic/obsolete meanings
-  const POS_FLAGS = /(archaic|obsolete|dated|poetic|rare)\b/i;
-  const posMeta = {}; // pos -> {archaic:boolean}
-  const defs=[], exs=[];
-  for(const m of (e.meanings||[])){
-    const raw = String(m.partOfSpeech||"");
-    if(!raw) continue;
-    const pos = normalizePOS(raw);
-    let archaic = false;
-    for(const d of (m.definitions||[])){
-      const def = String(d.definition||"");
-      if(def && defs.length<6) defs.push(def);
-      if(d.example && exs.length<6) exs.push(d.example);
-      if(POS_FLAGS.test(def)) archaic = true;
+  // Aggregate POS with scores
+  const posScores = {};
+  const defs = [], exs = [];
+
+  for (const m of (e.meanings||[])){
+    const pos = normalizePOS(m.partOfSpeech||"");
+    if (!pos) continue;
+    const s = scoreMeaning(m);
+    posScores[pos] = (posScores[pos] || 0) + s;
+
+    for (const d of (m.definitions||[])){
+      if (d.definition && defs.length<6) defs.push(d.definition);
+      if (d.example    && exs.length <6) exs.push(d.example);
     }
-    if(!posMeta[pos]) posMeta[pos] = { archaic:false };
-    posMeta[pos].archaic = posMeta[pos].archaic || archaic;
   }
 
-  // drop archaic/obsolete POS unless it's the only POS we have
-  let posList = Object.keys(posMeta).filter(p => !posMeta[p].archaic);
-  if(!posList.length) posList = Object.keys(posMeta);
+  // Rank POS by score (highest first) and drop those that look rare/archaic overall
+  let posList = Object.keys(posScores)
+    .filter(p => ALLOWED_POS.includes(p))
+    .sort((a,b)=> posScores[b]-posScores[a]);
 
-  // Cross-check with Datamuse to keep modern/common POS only
-  const dm = await fetchDatamusePOS(word);
-  if(dm.length){
-    const dmSet = new Set(dm);
-    const both = posList.filter(p => dmSet.has(p));
-    posList = both.length ? both : dm; // prefer consensus, else trust Datamuse
+  // Hide weak/rare senses (score <= 0) unless they are the ONLY sense
+  if (posList.length > 1) posList = posList.filter(p => posScores[p] > 0);
+
+  // Safety fallback
+  if (!posList.length && Object.keys(posScores).length){
+    posList = [Object.keys(posScores).sort((a,b)=>posScores[b]-posScores[a])[0]];
   }
 
   posList = sanitizePOS(posList);
@@ -938,7 +972,6 @@ async function fetchDict(word){
 
   return { word: e.word || word, ipa, audio, pos: posPrimary, posList, defs, exs };
 }
-
 // ------- OPTIONAL: one-time POS refresher for existing words -------
 async function refreshPOSForAllOnce(){
   try{
